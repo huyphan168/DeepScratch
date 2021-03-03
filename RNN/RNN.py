@@ -18,7 +18,7 @@ class RNNcell(nn.Module):
         self.Ba = nn.Parameter(torch.zeros(hidden_size))
 
     def forward(self, a, x):
-        return self.activation(self.Waa*a + self.Wax*x + self.Ba)
+        return self.activation(self.Waa.matmul(a) + self.Wax.matmul(x.T) + self.Ba)
 
 class RNN(nn.Module):
     def __init__(self, hidden_size: int, embedding_size: int, num_layers: int, bidirectional: bool):
@@ -28,8 +28,8 @@ class RNN(nn.Module):
         self.embedding_size = embedding_size
         self.bidirectional = bidirectional  
         if self.bidirectional:
-            input_layer = nn.ModuleList([RNNcell(self.hidden_size, self.embedding_size) for i in range(1)])
-            hidden_layer = nn.ModuleList([RNNcell(self.hidden_size, 2*self.hidden_size) for i in range(1)])
+            input_layer = nn.ModuleList([RNNcell(self.hidden_size, self.embedding_size) for i in range(2)])
+            hidden_layer = nn.ModuleList([RNNcell(self.hidden_size, 2*self.hidden_size) for i in range(2)])
             self.mod = nn.ModuleList([input_layer])
             if self.num_layers > 1:
                 self.mod.extend([hidden_layer for i in range(num_layers-1)])
@@ -40,7 +40,6 @@ class RNN(nn.Module):
             if self.num_layers > 1:
                 self.mod.extend([hidden_layer for i in range(num_layers-1)])
 
-        
 
     def __call__(self, input_seq):
         seq_len = input_seq.size()[0]
@@ -54,23 +53,26 @@ class RNN(nn.Module):
             return a[-1]
         else:
             a = [torch.zeros(self.hidden_size) for i in range(self.num_layers*2)]
-            h = [torch.zeros(self.hidden_size*2) for i in range(self.num_layers)]
+            h = [torch.zeros(self.hidden_size*2) for i in range(seq_len)]
             for layer in range(self.num_layers):
                 for t in range(seq_len):
                     x = input_seq[t]
                     x_1 = self.mod[layer][0](a[layer*2], x)
                     a[layer*2] = x_1
+                    h[t].scatter_(0, torch.arange(self.embedding_size, self.embedding_size*2).long(), x_1)
                 for t in reversed(range(seq_len)):
                     x = input_seq[t]
-                    x_2 = self.mod[layer][1](a[layer*2], x)
+                    x_2 = self.mod[layer][1](a[layer*2+1], x)
                     a[layer*2 + 1] = x_2
-                h = [torch.cat([a[i], a[i+1]]) for i in range(0,self.num_layers*2, 2)]
+                    h[t].scatter_(0, torch.arange(self.embedding_size).long(), x_2)
                 input_seq = h
             return h[-1]
 def _test():
     RNN_test = RNN(128, 60, 2, False)
     sequence = torch.rand(12,60)
-    print(sequence.size())
+    RNN_test(sequence)
+    RNN_test = RNN(128, 60, 2, True)
+    sequence = torch.rand(12,60)
     RNN_test(sequence)
 
 if __name__ == "__main__":
