@@ -35,19 +35,14 @@ class LSTMcell(nn.Module):
 
     def forward(self, c: torch.Tensor, h: torch.Tensor , x: torch.Tensor):
         batch_size = x.size()[0]
-        print(c.size())
-        print(h.size())
-        print(x.size())
-        weighted_forget = torch.einsum("xy, ayb -> axb", [self.Wfh, h]) + torch.einsum("xy, ayb -> axb", [self.Wfx, x]) + self.Bf.repeat(batch_size).view(batch_size, -1)
-        input_weight = torch.einsum("xy, ayb -> axb", [self.Wwf, h]) + torch.einsum("xy, ayb -> axb", [self.Wwx, x]) + self.Bw.repeat(batch_size).view(batch_size, -1)
-        input = torch.einsum("xy, ayb -> axb", [self.Wih, h]) + torch.einsum("xy, ayb -> axb", [self.Wix, x]) + self.Bi.repeat(batch_size).view(batch_size, -1)
-        memory_weight = torch.einsum("xy, ayb -> axb", [self.Wch, h]) + torch.einsum("xy, ayb -> axb", [self.Wcx, x]) + self.Bc.repeat(batch_size).view(batch_size, -1)
-
-        forgeted_c = c.mul(F.sigmoid(weighted_forget))
-        input_inject = F.sigmoid(input_weight).mul(F.tanh(input))
+        weighted_forget = torch.einsum("xy, ay -> ax", [self.Wfh, h]) + (x@self.Wfx.T) + self.Bf.repeat(batch_size).view(batch_size, -1)
+        input_weight = torch.einsum("xy, ay -> ax", [self.Wwh, h]) + (x@self.Wwx.T) + self.Bw.repeat(batch_size).view(batch_size, -1)
+        input = torch.einsum("xy, ay -> ax", [self.Wih, h]) + (x@self.Wix.T) + self.Bi.repeat(batch_size).view(batch_size, -1)
+        memory_weight = torch.einsum("xy, ay -> ax", [self.Wch, h]) + (x@self.Wcx.T) + self.Bc.repeat(batch_size).view(batch_size, -1)
+        forgeted_c = c.mul(torch.sigmoid(weighted_forget))
+        input_inject = torch.sigmoid(input_weight).mul(torch.tanh(input))
         c = forgeted_c + input_inject
-        short_memory = F.tanh(c).mul(F.sigmoid(memory_weight))
-
+        short_memory = torch.tanh(c).mul(torch.sigmoid(memory_weight))
         return c, short_memory
 
 class LSTM(nn.Module):
@@ -75,38 +70,38 @@ class LSTM(nn.Module):
         seq_len = sequence.size()[1]
         if self.bidirectional is False:
             #Initialize C, H matrix
-            C = torch.zeros(batch_size,  self.hidden_size, self.num_layers)
-            H = torch.zeros(batch_size,  self.hidden_size, self.num_layers)
+            C = torch.zeros(batch_size, self.hidden_size, self.num_layers)
+            H = torch.zeros(batch_size, self.hidden_size, self.num_layers)
             for t in range(seq_len):
-                x = sequence[:, t:t+1, :]
+                x = sequence[:, t, :]
                 for layer in range(self.num_layers):
                     C[:, :, layer], H[:, :, layer] = self.mod[layer](C[:, :, layer],H[:, :, layer],x)
-                    x = H[:, :, layer].copy()
+                    x = H[:, :, layer].clone()
             return H[:, :, -1]
         else:
             C = torch.zeros(batch_size, seq_len+1, self.num_layers, self.hidden_size, 2)
             H = torch.zeros(batch_size, seq_len+1, self.num_layers, self.hidden_size, 2)
             for layer in range(self.num_layers):
                 for t in range(seq_len):
-                    x = sequence[:, t, :].view(-1, 1, -1)
-                    C[:, t+1, layer, :, 0], H[:, t+1, layer, :, 0] = self.mod[layer][0](C[:, t, layer, :, 0].unsqueeze(-1),
-                                                                                        H[:, t, layer, :, 0].unsqueeze(-1), x)
+                    x = sequence[:, t, :]
+                    C[:, t+1, layer, :, 0], H[:, t+1, layer, :, 0] = self.mod[layer][0](C[:, t, layer, :, 0],
+                                                                                        H[:, t, layer, :, 0], x)
                             
                 for t in reversed(range(seq_len)):
-                    x = sequence[:, t, :].view(-1, 1, -1)
-                    C[:, t+1, layer, :, 1], H[:, t+1, layer, :, 1] = self.mod[layer][1](C[:, t, layer, :, 1].unsqueeze(-1),
-                                                                                        H[:, t, layer, :, 1].unsqueeze(-1), x)
+                    x = sequence[:, t, :]
+                    C[:, t+1, layer, :, 1], H[:, t+1, layer, :, 1] = self.mod[layer][1](C[:, t, layer, :, 1],
+                                                                                        H[:, t, layer, :, 1], x)
                 left = H[:, 1:, layer, :, 0]
                 right = H[:, 1:, layer, :, 1]
-                x = torch.cat([left, right], dim = 3)
-            return x[:, -1, -1]
+                sequence = torch.cat([left, right], dim = 2)
+            return sequence[:, -1, :]
 def _test():
     LSTM_test = LSTM(128, 60, 2, False)
     sequence = torch.rand(5, 12,60)
     LSTM_test(sequence)
     LSTM_test = LSTM(128, 60, 2, True)
     sequence = torch.rand(5, 12,60)
-    LSTM_test(sequence)
+    print(LSTM_test(sequence).shape)
 
 if __name__ == "__main__":
     _test()
